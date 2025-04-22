@@ -9,7 +9,6 @@ pub mod video;
 use std::ffi::CStr;
 use std::fmt::Debug;
 use pipewire_sys::pw_buffer;
-
 /// A wrapper around spa_param_type
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct ParamType(pub spa_sys::spa_param_type);

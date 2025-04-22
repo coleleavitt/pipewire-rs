@@ -13,6 +13,7 @@ homepage.workspace = true
 documentation = "https://pipewire.pages.freedesktop.org/pipewire-rs/libspa/"
 keywords = ["pipewire", "multimedia", "audio", "video"]
 
+
 [dependencies]
 spa_sys = { package = "libspa-sys", version = "0.8", path = "/home/cole/projects/pipewire-rs/libspa-sys" }
 bitflags = "2"
@@ -23,9 +24,12 @@ nom = "7"
 convert_case = "0.6"
 anyhow = "1.0.97"
 futures = "0.3.31"
+# ---- MOVE THE LINE HERE ----
+pipewire-sys = { version = "0.8", path = "/home/cole/projects/pipewire-rs/pipewire-sys" }
+# --------------------------
 
 [dev-dependencies]
-pipewire-sys = { version = "0.8", path = "/home/cole/projects/pipewire-rs/pipewire-sys" }
+# pipewire-sys was removed from here
 pipewire = { version = "0.8", path = "/home/cole/projects/pipewire-rs/pipewire" }
 
 [build-dependencies]
