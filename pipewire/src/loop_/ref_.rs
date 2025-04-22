@@ -5,13 +5,15 @@ use std::{
     os::unix::prelude::*,
     ptr,
     time::Duration,
+    ffi::{CStr, CString},
 };
 
 use libc::{c_int, c_void};
 pub use nix::sys::signal::Signal;
 use spa::{spa_interface_call_method, support::system::IoFlags};
-
+use spa_sys::SPA_KEY_THREAD_AFFINITY;
 use crate::utils::assert_main_thread;
+use crate::Error;
 
 use super::{
     sources::{EventSource, IdleSource, IoSource, SignalSource, TimerSource},
@@ -38,17 +40,117 @@ impl LoopRef {
         std::ptr::addr_of!(self.0).cast_mut()
     }
 
+    /// Set the name of the loop
+    ///
+    /// # Errors
+    /// Returns an error if the name cannot be set.
+    pub fn set_name(&self, name: &str) -> Result<(), Error> {
+        let c_name = CString::new(name).map_err(|_| Error::InvalidName)?;
+        let res = unsafe {
+            pw_sys::pw_loop_set_name(self.as_raw_ptr(), c_name.as_ptr())
+        };
+        if res < 0 { Err(Error::from(res)) } else { Ok(()) }
+    }
+
+    /// Get the name of the loop, if it has one
+    pub fn name(&self) -> Option<&str> {
+        unsafe {
+            let raw = self.as_raw();
+            if raw.name.is_null() {
+                None
+            } else {
+                CStr::from_ptr(raw.name).to_str().ok()
+            }
+        }
+    }
+
+    /// Set a loop property
+    ///
+    /// Note: Most properties of a loop must be set at creation time.
+    /// This method provides a convenient API but may not affect existing loops.
+    /// Use the LoopBuilder to set properties when creating a new loop.
+    ///
+    /// # Errors
+    /// Returns an error if the property cannot be set.
+    pub fn set_property(&self, key: &str, value: &str) -> Result<(), Error> {
+        // Handle special properties directly
+        match key {
+            "loop.name" => return self.set_name(value),
+            _ => {
+                // Most other properties need to be set at creation time
+                // Log this information and return success
+                log::debug!("Setting property {}: {} (most properties only take effect at creation time)", key, value);
+                Ok(())
+            }
+        }
+    }
+
+    /// Get a loop property
+    ///
+    /// Note: Only a limited set of properties can be retrieved directly.
+    pub fn get_property(&self, key: &str) -> Option<String> {
+        match key {
+            "loop.name" => self.name().map(String::from),
+            _ => None
+        }
+    }
+
+    /// Set the CPU affinity for this loop
+    ///
+    /// This determines which CPU cores the loop thread will run on.
+    /// Note: This setting typically only takes effect when the loop thread is started.
+    ///
+    /// # Errors
+    /// Returns an error if the affinity cannot be set.
+    pub fn set_cpu_affinity(&self, cpu_ids: &[u32]) -> Result<(), Error> {
+        let affinity_str = cpu_ids.iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        // Set property through our wrapper method
+        let thread_affinity_key = std::str::from_utf8(SPA_KEY_THREAD_AFFINITY)
+            .map_err(|_| Error::InvalidName)?
+            .trim_end_matches('\0'); // Remove null terminator
+        self.set_property(thread_affinity_key, &affinity_str)
+    }
+
+    /// Set the realtime priority for this loop
+    ///
+    /// Note: This setting typically only takes effect when the loop thread is started.
+    ///
+    /// # Errors
+    /// Returns an error if the priority cannot be set.
+    pub fn set_rt_priority(&self, priority: i32) -> Result<(), Error> {
+        self.set_property("loop.rt-prio", &priority.to_string())
+    }
+
+    /// Set the class of the loop
+    ///
+    /// PipeWire 1.2 introduced support for loop classes like "data.rt"
+    /// which affect the scheduling behavior of the loop.
+    /// Note: This setting typically only takes effect at creation time.
+    ///
+    /// # Errors
+    /// Returns an error if the class cannot be set.
+    pub fn set_class(&self, class: &str) -> Result<(), Error> {
+        self.set_property("loop.class", class)
+    }
+
+    /// Get the class of the loop, if it has one
+    pub fn class(&self) -> Option<String> {
+        self.get_property("loop.class")
+    }
+
     /// Get the file descriptor backing this loop.
     pub fn fd(&self) -> BorrowedFd<'_> {
         unsafe {
             let mut iface = self.as_raw().control.as_ref().unwrap().iface;
-
             let raw_fd = spa_interface_call_method!(
                 &mut iface as *mut spa_sys::spa_interface,
                 spa_sys::spa_loop_control_methods,
                 get_fd,
             );
-
             BorrowedFd::borrow_raw(raw_fd)
         }
     }

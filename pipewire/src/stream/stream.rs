@@ -169,12 +169,23 @@ impl StreamRef {
         Ok(())
     }
 
+
+
     /// Activate or deactivate the stream
     pub fn set_active(&self, active: bool) -> Result<(), Error> {
         let r = unsafe { pw_sys::pw_stream_set_active(self.as_raw_ptr(), active) };
 
         SpaResult::from_c(r).into_sync_result()?;
         Ok(())
+    }
+
+    pub fn set_async(&self, enable: bool) -> Result<(), Error> {
+        let flags = if enable {
+            self.get_flags() | StreamFlags::ASYNC
+        } else {
+            self.get_flags() & !StreamFlags::ASYNC
+        };
+        self.update_flags(flags)
     }
 
     /// Take a Buffer from the Stream
@@ -299,15 +310,67 @@ impl StreamRef {
     }
 
     #[cfg(feature = "v0_3_34")]
+    /// Check if the stream is driving the graph
+    ///
+    /// The stream needs to have the DRIVER flag set. When the stream is driving,
+    /// trigger_process() needs to be called when data is available/needed.
     pub fn is_driving(&self) -> bool {
         unsafe { pw_sys::pw_stream_is_driving(self.as_raw_ptr()) }
     }
 
+
+
     #[cfg(feature = "v0_3_34")]
+    /// Trigger a push/pull on the stream
+    ///
+    /// One iteration of the graph will be scheduled. If it successfully finishes,
+    /// process() will be called. It's possible for the graph iteration to not finish,
+    /// so this method needs to be called again even if process() is not called.
     pub fn trigger_process(&self) -> Result<(), Error> {
         let r = unsafe { pw_sys::pw_stream_trigger_process(self.as_raw_ptr()) };
-
-        SpaResult::from_c(r).into_result()?;
+        SpaResult::from_c(r).into_sync_result()?;
         Ok(())
     }
+
+    /// Get the current time in nanoseconds
+    ///
+    /// This value can be compared with the pw_time_now value.
+    /// Since 1.1.0
+    pub fn get_nsec(&self) -> u64 {
+        unsafe { pw_sys::pw_stream_get_nsec(self.as_raw_ptr()) }
+    }
+
+    /// Get the data loop that is doing the processing of this stream
+    ///
+    /// This loop is assigned after connect().
+    /// Since 1.1.0
+    pub fn get_data_loop(&self) -> Option<&crate::loop_::LoopRef> {
+        unsafe {
+            let loop_ptr = pw_sys::pw_stream_get_data_loop(self.as_raw_ptr());
+            if loop_ptr.is_null() {
+                None
+            } else {
+                Some(&*(loop_ptr as *const crate::loop_::LoopRef))
+            }
+        }
+    }
+
+    /// Check if the stream uses asynchronous processing
+    pub fn is_async(&self) -> bool {
+        self.get_flags().contains(StreamFlags::ASYNC)
+    }
+
+    /// Get stream flags
+    fn get_flags(&self) -> StreamFlags {
+        // Implementation would depend on how you track flags internally
+        // This could be implemented by querying properties or state
+        todo!("Implement get_flags method")
+    }
+
+    /// Update stream flags
+    fn update_flags(&self, flags: StreamFlags) -> Result<(), Error> {
+        // This would require reconnecting or updating the stream
+        todo!("Implement update_flags method")
+    }
+
 }

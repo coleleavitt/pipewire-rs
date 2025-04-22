@@ -28,6 +28,7 @@ futures = { version = "0.3.31", optional = true }
 pin-project = { version = "1.1.4", optional = true }
 tokio = { version = "1.44.2", features = ["full"] }
 rand = "0.9.1"
+log = "0.4.27"
 
 [dev-dependencies]
 clap = { version = "4.3.2", features = ["derive"] }

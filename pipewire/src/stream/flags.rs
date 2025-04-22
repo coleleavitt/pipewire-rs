@@ -16,7 +16,12 @@ bitflags! {
         const EXCLUSIVE = pw_sys::pw_stream_flags_PW_STREAM_FLAG_EXCLUSIVE;
         const DONT_RECONNECT = pw_sys::pw_stream_flags_PW_STREAM_FLAG_DONT_RECONNECT;
         const ALLOC_BUFFERS = pw_sys::pw_stream_flags_PW_STREAM_FLAG_ALLOC_BUFFERS;
-        #[cfg(feature = "v0_3_41")]
+        // Add unconditionally (remove feature gate)
         const TRIGGER = pw_sys::pw_stream_flags_PW_STREAM_FLAG_TRIGGER;
+        const ASYNC = pw_sys::pw_stream_flags_PW_STREAM_FLAG_ASYNC;
+
+        // Add new flags from PipeWire 1.2
+        const EARLY_PROCESS = pw_sys::pw_stream_flags_PW_STREAM_FLAG_EARLY_PROCESS;
+        const RT_TRIGGER_DONE = pw_sys::pw_stream_flags_PW_STREAM_FLAG_RT_TRIGGER_DONE;
     }
 }

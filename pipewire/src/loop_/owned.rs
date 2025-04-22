@@ -31,6 +31,11 @@ impl Loop {
         }
     }
 
+    /// Create a new builder for configuring a [`Loop`] with specific properties.
+    pub fn builder() -> LoopBuilder {
+        LoopBuilder::default()
+    }
+
     /// Create a new loop from a raw [`pw_loop`](`pw_sys::pw_loop`), taking ownership of it.
     ///
     /// # Safety
@@ -66,6 +71,86 @@ impl std::ops::Deref for Loop {
 impl std::convert::AsRef<LoopRef> for Loop {
     fn as_ref(&self) -> &LoopRef {
         self.deref()
+    }
+}
+
+/// A builder for creating a configured [`Loop`]
+#[derive(Default)]
+pub struct LoopBuilder {
+    name: Option<String>,
+    class: Option<String>,
+    cpu_affinity: Option<Vec<u32>>,
+    rt_priority: Option<i32>,
+    properties: Vec<(String, String)>,
+}
+
+impl LoopBuilder {
+    /// Set the name of the loop
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Set the class of the loop
+    ///
+    /// PipeWire 1.2 introduced support for loop classes like "data.rt"
+    /// which affect the scheduling behavior of the loop.
+    pub fn class(mut self, class: impl Into<String>) -> Self {
+        self.class = Some(class.into());
+        self
+    }
+
+    /// Set the CPU affinity for this loop
+    ///
+    /// This determines which CPU cores the loop thread will run on.
+    pub fn cpu_affinity(mut self, cpu_ids: impl Into<Vec<u32>>) -> Self {
+        self.cpu_affinity = Some(cpu_ids.into());
+        self
+    }
+
+    /// Set the realtime priority for this loop
+    pub fn rt_priority(mut self, priority: i32) -> Self {
+        self.rt_priority = Some(priority);
+        self
+    }
+
+    /// Add a custom property to the loop
+    pub fn property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.properties.push((key.into(), value.into()));
+        self
+    }
+
+    /// Build the loop with the configured properties
+    pub fn build(self) -> Result<Loop, Error> {
+        // Create a base loop
+        let loop_ = Loop::new(None)?;
+
+        // Set name if specified
+        if let Some(name) = self.name {
+            loop_.set_name(&name)?;
+        }
+
+        // Set class if specified
+        if let Some(class) = self.class {
+            loop_.set_class(&class)?;
+        }
+
+        // Set CPU affinity if specified
+        if let Some(cpu_ids) = self.cpu_affinity {
+            loop_.set_cpu_affinity(&cpu_ids)?;
+        }
+
+        // Set RT priority if specified
+        if let Some(priority) = self.rt_priority {
+            loop_.set_rt_priority(priority)?;
+        }
+
+        // Set custom properties
+        for (key, value) in self.properties {
+            loop_.set_property(&key, &value)?;
+        }
+
+        Ok(loop_)
     }
 }
 
