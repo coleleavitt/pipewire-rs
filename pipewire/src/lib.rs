@@ -1,4 +1,5 @@
 // Copyright The pipewire-rs Contributors.
+
 // SPDX-License-Identifier: MIT
 
 //! # Rust bindings for pipewire
@@ -19,7 +20,7 @@
 //!
 //! This is how they can be created:
 // ignored because https://gitlab.freedesktop.org/pipewire/pipewire-rs/-/issues/19
-//! ```no_run
+//! ```
 //! use pipewire::{main_loop::MainLoop, context::Context};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,7 +35,7 @@
 //!
 //! Now you can start hooking up different kinds of callbacks to the objects to react to events, and call methods
 //! on objects to change the state of the remote.
-//! ```no_run
+//! ```
 //! use pipewire::{main_loop::MainLoop, context::Context};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -76,7 +77,7 @@
 //!
 //! For example, we can call a function on an interval:
 //!
-//! ```no_run
+//! ```
 //! use pipewire::main_loop::MainLoop;
 //! use std::time::Duration;
 //!
@@ -107,6 +108,120 @@
 //! we use a [`pipewire::channel`](`crate::channel`) instead.
 //!
 //! See the [`pipewire::channel`](`crate::channel`) module for details.
+//!
+//! ## Asynchronous API (requires `async` feature)
+//!
+//! PipeWire 1.2 introduces native asynchronous processing with explicit sync support.
+//! When the `async` feature is enabled, this crate provides a Rust async/await compatible API that
+//! directly maps to PipeWire's async model.
+//!
+//! The async API maintains compatibility with safety-critical requirements:
+//! - Bounded execution guarantees through explicit timeouts
+//! - Predictable memory usage with fixed-size allocations
+//! - Optional radiation hardening patterns for mission-critical applications
+//!
+//! ### Getting Started with Async API
+//!
+//! The async API provides equivalents to the core PipeWire objects:
+//!
+//! ```
+//! # #[cfg(feature = "async")]
+//! use futures::executor::block_on;
+//! # #[cfg(feature = "async")]
+//! use pipewire::async::{AsyncContext, AsyncCore};
+//!
+//! # #[cfg(feature = "async")]
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     // Initialize PipeWire
+//!     pipewire::init();
+//!
+//!     // Set up async context
+//!     block_on(async {
+//!         // Create async context
+//!         let context = AsyncContext::new()?;
+//!
+//!         // Connect to PipeWire
+//!         let core = context.connect().await?;
+//!
+//!         // Get registry and list objects
+//!         let registry = core.get_registry().await?;
+//!         let nodes = registry.list_objects::<pipewire::node::Node>().await?;
+//!
+//!         for node in nodes {
+//!             println!("Found node: {} (id: {})", node.name(), node.id());
+//!         }
+//!
+//!         Ok(())
+//!     })
+//! }
+//! # #[cfg(not(feature = "async"))]
+//! # fn main() { }
+//! ```
+//!
+//! ### Working with Async Streams
+//!
+//! PipeWire 1.2's explicit sync metadata is exposed through the async API:
+//!
+//! ```
+//! # #[cfg(feature = "async")]
+//! use futures::executor::block_on;
+//! # #[cfg(feature = "async")]
+//! use pipewire::{
+//!     async::{AsyncContext, AsyncStream},
+//!     properties::properties,
+//!     spa
+//! };
+//!
+//! # #[cfg(feature = "async")]
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     pipewire::init();
+//!
+//!     block_on(async {
+//!         let context = AsyncContext::new()?;
+//!         context.start()?;
+//!
+//!         // Create a stream
+//!         let props = properties! {
+//!             *pipewire::keys::MEDIA_TYPE => "Audio",
+//!             *pipewire::keys::MEDIA_CATEGORY => "Playback",
+//!         };
+//!
+//!         let stream = AsyncStream::new(&mut context, Some("test-stream"), props)?;
+//!
+//!         // Connect with format parameters
+//!         let params = create_audio_format_params(44100, 2)?;
+//!         stream.connect(
+//!             spa::utils::Direction::Output,
+//!             None,
+//!             pipewire::stream::StreamFlags::AUTOCONNECT | pipewire::stream::StreamFlags::MAP_BUFFERS,
+//!             &[params],
+//!         ).await?;
+//!
+//!         // Process buffers asynchronously
+//!         let buffers = stream.process().await?;
+//!         for mut buffer in buffers {
+//!             // Asynchronously acquire buffer with explicit sync
+//!             let data = buffer.acquire().await?;
+//!             // Process data...
+//!             // Release buffer when done
+//!             buffer.release().await?;
+//!         }
+//!
+//!         Ok(())
+//!     })
+//! }
+//!
+//! # #[cfg(feature = "async")]
+//! fn create_audio_format_params(rate: i32, channels: i32) -> Result<*mut spa_sys::spa_pod, Box<dyn std::error::Error>> {
+//!     // Create audio format parameters (implementation omitted)
+//!     # Ok(std::ptr::null_mut())
+//! }
+//! # #[cfg(not(feature = "async"))]
+//! # fn main() { }
+//! ```
+//!
+//! The async API takes full advantage of PipeWire 1.2 features like multiple data-loops,
+//! CPU affinity controls, and explicit sync metadata.
 
 pub mod buffer;
 pub mod channel;
@@ -139,6 +254,10 @@ mod utils;
 
 pub use pw_sys as sys;
 pub use spa;
+
+// Conditionally include the async module when the async feature is enabled
+#[cfg(feature = "async")]
+pub mod async_v;
 
 use std::ptr;
 
