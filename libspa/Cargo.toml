@@ -10,12 +10,12 @@ repository.workspace = true
 license.workspace = true
 readme = "README.md"
 homepage.workspace = true
-documentation = "https://pipewire.pages.freedesktop.org/pipewire-rs/libspa/"
+documentation = "../libspa/"
 keywords = ["pipewire", "multimedia", "audio", "video"]
 
 
 [dependencies]
-spa_sys = { package = "libspa-sys", version = "0.8", path = "/home/cole/projects/pipewire-rs/libspa-sys" }
+spa_sys = { package = "libspa-sys", version = "0.8", path = "../libspa-sys" }
 bitflags = "2"
 libc = "0.2"
 nix = "0.29"
@@ -23,14 +23,13 @@ cookie-factory = "0.3.2"
 nom = "7"
 convert_case = "0.6"
 anyhow = "1.0.97"
-futures = "0.3.31"
 # ---- MOVE THE LINE HERE ----
-pipewire-sys = { version = "0.8", path = "/home/cole/projects/pipewire-rs/pipewire-sys" }
+pipewire-sys = { version = "0.8", path = "../pipewire-sys" }
 # --------------------------
 
 [dev-dependencies]
 # pipewire-sys was removed from here
-pipewire = { version = "0.8", path = "/home/cole/projects/pipewire-rs/pipewire" }
+pipewire = { version = "0.8", path = "../pipewire" }
 
 [build-dependencies]
 system-deps = "6"

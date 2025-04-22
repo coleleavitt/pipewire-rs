@@ -256,8 +256,8 @@ pub use pw_sys as sys;
 pub use spa;
 
 // Conditionally include the async module when the async feature is enabled
-#[cfg(feature = "async")]
-pub mod async_v;
+// #[cfg(feature = "async")]
+// pub mod async_v;
 
 use std::ptr;
 

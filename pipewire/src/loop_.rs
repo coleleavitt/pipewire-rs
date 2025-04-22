@@ -98,7 +98,7 @@ impl LoopRef {
     /// # Panics
     /// This function will panic if the provided timeout as milliseconds does not fit inside a
     /// `c_int` integer.
-    pub fn iterate(&self, timeout: std::time::Duration) -> i32 {
+    pub fn iterate(&self, timeout: Option<Duration>) -> i32 {
         unsafe {
             self.enter();
             let res = self.iterate_unguarded(timeout);
@@ -112,19 +112,28 @@ impl LoopRef {
     ///
     /// # Safety
     /// Before calling this, [`Self::enter()`] must be called, and [`Self::leave()`] must be called afterwards.
-    pub unsafe fn iterate_unguarded(&self, timeout: std::time::Duration) -> i32 {
+    pub unsafe fn iterate_unguarded(&self, timeout: Option<Duration>) -> i32 {
         let mut iface = self.as_raw().control.as_ref().unwrap().iface;
 
-        let timeout: c_int = timeout
-            .as_millis()
-            .try_into()
-            .expect("Provided timeout does not fit in a c_int");
+        // Convert Option<Duration> to c_int
+        let timeout_ms: c_int = match timeout {
+            Some(duration) => {
+                // Convert duration to milliseconds and ensure it fits in c_int
+                let millis = duration.as_millis();
+                // Safety check: ensure the value fits in c_int
+                if millis > c_int::MAX as u128 {
+                    panic!("Provided timeout does not fit in a c_int");
+                }
+                millis as c_int
+            }
+            None => -1,  // No duration = infinite timeout
+        };
 
         spa_interface_call_method!(
             &mut iface as *mut spa_sys::spa_interface,
             spa_sys::spa_loop_control_methods,
             iterate,
-            timeout
+            timeout_ms
         )
     }
 

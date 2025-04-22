@@ -142,7 +142,6 @@ impl Debug for MetaType {
     }
 }
 
-
 pub trait TimelineManager {
     async fn set_acquire_point(&self, point: u64) -> Result<(), anyhow::Error>;
     async fn signal(&self, point: u64) -> Result<(), anyhow::Error>;

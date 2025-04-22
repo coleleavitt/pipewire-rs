@@ -23,6 +23,11 @@ libc = "0.2"
 nix = { version = "0.29", features = ["signal", "fs"] }
 bitflags = "2"
 once_cell = "1.0"
+# Async feature dependencies - marked as optional
+futures = { version = "0.3.31", optional = true }
+pin-project = { version = "1.1.4", optional = true }
+tokio = { version = "1.44.2", features = ["full"] }
+rand = "0.9.1"
 
 [dev-dependencies]
 clap = { version = "4.3.2", features = ["derive"] }
@@ -45,4 +50,7 @@ v0_3_64 = ["v0_3_57"]
 v0_3_65 = ["v0_3_40", "spa_sys/v0_3_65"]
 v0_3_68 = ["v0_3_65"]
 v0_3_75 = ["v0_3_68"]
-v0_3_77 = ["v0_3_75"] 
+v0_3_77 = ["v0_3_75"]
+
+# Async support feature flag
+async = ["dep:futures", "dep:pin-project"]
