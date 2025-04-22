@@ -14,17 +14,19 @@ documentation = "https://pipewire.pages.freedesktop.org/pipewire-rs/libspa/"
 keywords = ["pipewire", "multimedia", "audio", "video"]
 
 [dependencies]
-spa_sys = { package = "libspa-sys", version = "0.8", path = "../libspa-sys" }
+spa_sys = { package = "libspa-sys", version = "0.8", path = "/home/cole/projects/pipewire-rs/libspa-sys" }
 bitflags = "2"
 libc = "0.2"
 nix = "0.29"
 cookie-factory = "0.3.2"
 nom = "7"
 convert_case = "0.6"
+anyhow = "1.0.97"
+futures = "0.3.31"
 
 [dev-dependencies]
-pipewire-sys = { version = "0.8", path = "../pipewire-sys" }
-pipewire = { version = "0.8", path = "../pipewire" }
+pipewire-sys = { version = "0.8", path = "/home/cole/projects/pipewire-rs/pipewire-sys" }
+pipewire = { version = "0.8", path = "/home/cole/projects/pipewire-rs/pipewire" }
 
 [build-dependencies]
 system-deps = "6"
@@ -37,4 +39,5 @@ libspa = { name = "libspa-0.2", version = "0.2" }
 v0_3_33 = []
 v0_3_40 = ["v0_3_33"]
 v0_3_65 = ["v0_3_40", "spa_sys/v0_3_65"]
+v0_3_68 = ["v0_3_65"]  # Add this line
 v0_3_75 = ["v0_3_65"]

@@ -6,6 +6,11 @@ use std::{convert::TryFrom, fmt::Debug};
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct DataType(spa_sys::spa_data_type);
 
+pub mod meta;
+
+// Re-export the metadata types
+pub use meta::SyncTimelineRef;
+
 #[allow(non_upper_case_globals)]
 impl DataType {
     pub const Invalid: Self = Self(spa_sys::SPA_DATA_Invalid);
@@ -17,6 +22,8 @@ impl DataType {
     pub const DmaBuf: Self = Self(spa_sys::SPA_DATA_DmaBuf);
     /// Memory is identified with an id
     pub const MemId: Self = Self(spa_sys::SPA_DATA_MemId);
+    /// Syncobj, usually requires a spa_meta_sync_timeline metadata
+    pub const SyncObj: Self = Self(spa_sys::SPA_DATA_SyncObj);
 
     pub fn from_raw(raw: spa_sys::spa_data_type) -> Self {
         Self(raw)

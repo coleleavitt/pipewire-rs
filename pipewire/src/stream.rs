@@ -148,6 +148,7 @@ impl StreamRef {
         }
     }
 
+
     /// Add a local listener builder. User data is initialized with its default value
     #[must_use = "Fluent builder API"]
     pub fn add_local_listener<D: Default>(&self) -> ListenerLocalBuilder<'_, D> {
@@ -225,6 +226,12 @@ impl StreamRef {
 
     pub fn dequeue_buffer(&self) -> Option<Buffer> {
         unsafe { Buffer::from_raw(self.dequeue_raw_buffer(), self) }
+    }
+    /// This is a wrapper around the synchronous dequeue_buffer method
+    /// for compatibility with async code.
+    pub async fn dequeue_buffer_async(&self) -> Result<Option<Buffer>, Error> {
+        // This is just a wrapper that makes the synchronous method work with async code
+        Ok(self.dequeue_buffer())
     }
 
     /// Return a Buffer to the Stream
@@ -343,6 +350,7 @@ impl StreamRef {
 
     // TODO: pw_stream_get_core()
     // TODO: pw_stream_get_time()
+
 }
 
 type ParamChangedCB<D> = dyn FnMut(&StreamRef, &mut D, u32, Option<&spa::pod::Pod>);
