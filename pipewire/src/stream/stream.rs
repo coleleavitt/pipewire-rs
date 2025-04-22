@@ -9,15 +9,13 @@ use crate::{
 };
 use spa::utils::result::SpaResult;
 use std::{
-    ffi::{self, CStr, CString},
-    fmt::Debug,
-    pin::Pin,
+    ffi::{CStr, CString},
     ptr,
 };
 
 use super::flags::StreamFlags;
-use super::state::StreamState;
 use super::listener::{ListenerLocalBuilder, ListenerLocalCallbacks};
+use super::state::StreamState;
 
 /// A wrapper around the pipewire stream interface. Streams are a higher
 /// level abstraction around nodes in the graph. A stream can be used to send or

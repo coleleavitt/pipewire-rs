@@ -2,19 +2,21 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    convert::TryInto,
-    ops::Deref,
     os::unix::prelude::*,
-    ptr::{self, NonNull},
-    rc::{Rc, Weak},
+    ptr,
     time::Duration,
 };
 
 use libc::{c_int, c_void};
 pub use nix::sys::signal::Signal;
-use spa::{spa_interface_call_method, support::system::IoFlags, utils::result::SpaResult};
+use spa::{spa_interface_call_method, support::system::IoFlags};
 
-use crate::{utils::assert_main_thread, Error};
+use crate::utils::assert_main_thread;
+
+use super::{
+    sources::{EventSource, IdleSource, IoSource, SignalSource, TimerSource},
+    traits::IsSource,
+};
 
 /// A transparent wrapper around a raw [`pw_loop`](`pw_sys::pw_loop`).
 /// It is usually only seen in a reference (`&LoopRef`).
@@ -26,10 +28,12 @@ use crate::{utils::assert_main_thread, Error};
 pub struct LoopRef(pw_sys::pw_loop);
 
 impl LoopRef {
+    /// Get a reference to the raw loop
     pub fn as_raw(&self) -> &pw_sys::pw_loop {
         &self.0
     }
 
+    /// Get a mutable pointer to the raw loop
     pub fn as_raw_ptr(&self) -> *mut pw_sys::pw_loop {
         std::ptr::addr_of!(self.0).cast_mut()
     }
@@ -154,7 +158,7 @@ impl LoopRef {
         where
             I: AsRawFd,
         {
-            let (io, callback) = (data as *mut IoSourceData<I>).as_mut().unwrap();
+            let (io, callback) = (data as *mut (I, Box<dyn Fn(&mut I)>)).as_mut().unwrap();
             callback(io);
         }
 
@@ -181,11 +185,7 @@ impl LoopRef {
 
         let ptr = ptr::NonNull::new(source).expect("source is NULL");
 
-        IoSource {
-            ptr,
-            loop_: self,
-            _data: data,
-        }
+        IoSource::new(ptr, self, data)
     }
 
     /// Register a callback to be called whenever the loop is idle.
@@ -224,11 +224,7 @@ impl LoopRef {
 
         let ptr = ptr::NonNull::new(source).expect("source is NULL");
 
-        IdleSource {
-            ptr,
-            loop_: self,
-            _data: data,
-        }
+        IdleSource::new(ptr, self, data)
     }
 
     /// Register a signal with a callback that is called when the signal is sent.
@@ -269,11 +265,7 @@ impl LoopRef {
 
         let ptr = ptr::NonNull::new(source).expect("source is NULL");
 
-        SignalSource {
-            ptr,
-            loop_: self,
-            _data: data,
-        }
+        SignalSource::new(ptr, self, data)
     }
 
     /// Register a new event with a callback that is called when the event happens.
@@ -310,11 +302,7 @@ impl LoopRef {
 
         let ptr = ptr::NonNull::new(source).expect("source is NULL");
 
-        EventSource {
-            ptr,
-            loop_: self,
-            _data: data,
-        }
+        EventSource::new(ptr, self, data)
     }
 
     /// Register a timer with the loop with a callback that is called after the timer expired.
@@ -353,18 +341,14 @@ impl LoopRef {
 
         let ptr = ptr::NonNull::new(source).expect("source is NULL");
 
-        TimerSource {
-            ptr,
-            loop_: self,
-            _data: data,
-        }
+        TimerSource::new(ptr, self, data)
     }
 
     /// Destroy a source that belongs to this loop.
     ///
     /// # Safety
     /// The provided source must belong to this loop.
-    unsafe fn destroy_source<S>(&self, source: &S)
+    pub(crate) unsafe fn destroy_source<S>(&self, source: &S)
     where
         S: IsSource,
         Self: Sized,
@@ -377,313 +361,5 @@ impl LoopRef {
             destroy_source,
             source.as_ptr()
         )
-    }
-}
-
-/// Trait implemented by objects that implement a `pw_loop` and are reference counted in some way.
-///
-/// # Safety
-///
-/// The `LoopRef` returned by the implementation of `AsRef<LoopRef>` must remain valid as long as any clone
-/// of the trait implementor is still alive. \
-pub unsafe trait IsLoopRc: Clone + AsRef<LoopRef> + 'static {}
-
-#[derive(Clone, Debug)]
-pub struct Loop {
-    inner: Rc<LoopInner>,
-}
-
-impl Loop {
-    /// Create a new [`Loop`].
-    pub fn new(properties: Option<&spa::utils::dict::DictRef>) -> Result<Self, Error> {
-        // This is a potential "entry point" to the library, so we need to ensure it is initialized.
-        crate::init();
-
-        unsafe {
-            let props = properties
-                .map_or(ptr::null(), |props| props.as_raw())
-                .cast_mut();
-            let l = pw_sys::pw_loop_new(props);
-            let ptr = ptr::NonNull::new(l).ok_or(Error::CreationFailed)?;
-            Ok(Self::from_raw(ptr))
-        }
-    }
-
-    /// Create a new loop from a raw [`pw_loop`](`pw_sys::pw_loop`), taking ownership of it.
-    ///
-    /// # Safety
-    /// The provided pointer must point to a valid, well aligned [`pw_loop`](`pw_sys::pw_loop`).
-    ///
-    /// The raw loop should not be manually destroyed or moved, as the new [`Loop`] takes ownership of it.
-    pub unsafe fn from_raw(ptr: NonNull<pw_sys::pw_loop>) -> Self {
-        Self {
-            inner: Rc::new(LoopInner::from_raw(ptr)),
-        }
-    }
-
-    pub fn downgrade(&self) -> WeakLoop {
-        let weak = Rc::downgrade(&self.inner);
-        WeakLoop { weak }
-    }
-}
-
-// Safety: The inner pw_loop is guaranteed to remain valid while any clone of the `Loop` is held,
-//         because we use an internal Rc to keep it alive.
-unsafe impl IsLoopRc for Loop {}
-
-impl std::ops::Deref for Loop {
-    type Target = LoopRef;
-
-    fn deref(&self) -> &Self::Target {
-        let loop_ = self.inner.ptr.as_ptr();
-        unsafe { &*(loop_.cast::<LoopRef>()) }
-    }
-}
-
-impl std::convert::AsRef<LoopRef> for Loop {
-    fn as_ref(&self) -> &LoopRef {
-        self.deref()
-    }
-}
-
-pub struct WeakLoop {
-    weak: Weak<LoopInner>,
-}
-
-impl WeakLoop {
-    pub fn upgrade(&self) -> Option<Loop> {
-        self.weak.upgrade().map(|inner| Loop { inner })
-    }
-}
-
-#[derive(Debug)]
-struct LoopInner {
-    ptr: ptr::NonNull<pw_sys::pw_loop>,
-}
-
-impl LoopInner {
-    pub unsafe fn from_raw(ptr: NonNull<pw_sys::pw_loop>) -> Self {
-        Self { ptr }
-    }
-}
-
-impl Drop for LoopInner {
-    fn drop(&mut self) {
-        unsafe { pw_sys::pw_loop_destroy(self.ptr.as_ptr()) }
-    }
-}
-
-pub trait IsSource {
-    /// Return a valid pointer to a raw `spa_source`.
-    fn as_ptr(&self) -> *mut spa_sys::spa_source;
-}
-
-type IoSourceData<I> = (I, Box<dyn Fn(&mut I) + 'static>);
-
-/// A source that can be used to react to IO events.
-///
-/// This source can be obtained by calling [`add_io`](`LoopRef::add_io`) on a loop, registering a callback to it.
-pub struct IoSource<'l, I>
-where
-    I: AsRawFd,
-{
-    ptr: ptr::NonNull<spa_sys::spa_source>,
-    loop_: &'l LoopRef,
-    // Store data wrapper to prevent leak
-    _data: Box<IoSourceData<I>>,
-}
-
-impl<'l, I> IsSource for IoSource<'l, I>
-where
-    I: AsRawFd,
-{
-    fn as_ptr(&self) -> *mut spa_sys::spa_source {
-        self.ptr.as_ptr()
-    }
-}
-
-impl<'l, I> Drop for IoSource<'l, I>
-where
-    I: AsRawFd,
-{
-    fn drop(&mut self) {
-        unsafe { self.loop_.destroy_source(self) }
-    }
-}
-
-/// A source that can be used to have a callback called when the loop is idle.
-///
-/// This source can be obtained by calling [`add_idle`](`LoopRef::add_idle`) on a loop, registering a callback to it.
-pub struct IdleSource<'l> {
-    ptr: ptr::NonNull<spa_sys::spa_source>,
-    loop_: &'l LoopRef,
-    // Store data wrapper to prevent leak
-    _data: Box<dyn Fn() + 'static>,
-}
-
-impl<'l> IdleSource<'l> {
-    /// Set the source as enabled or disabled, allowing or preventing the callback from being called.
-    pub fn enable(&self, enable: bool) {
-        unsafe {
-            let mut iface = self.loop_.as_raw().utils.as_ref().unwrap().iface;
-
-            spa_interface_call_method!(
-                &mut iface as *mut spa_sys::spa_interface,
-                spa_sys::spa_loop_utils_methods,
-                enable_idle,
-                self.as_ptr(),
-                enable
-            );
-        }
-    }
-}
-
-impl<'l> IsSource for IdleSource<'l> {
-    fn as_ptr(&self) -> *mut spa_sys::spa_source {
-        self.ptr.as_ptr()
-    }
-}
-
-impl<'l> Drop for IdleSource<'l> {
-    fn drop(&mut self) {
-        unsafe { self.loop_.destroy_source(self) }
-    }
-}
-
-/// A source that can be used to react to signals.
-///
-/// This source can be obtained by calling [`add_signal_local`](`LoopRef::add_signal_local`) on a loop, registering a callback to it.
-pub struct SignalSource<'l> {
-    ptr: ptr::NonNull<spa_sys::spa_source>,
-    loop_: &'l LoopRef,
-    // Store data wrapper to prevent leak
-    _data: Box<dyn Fn() + 'static>,
-}
-
-impl<'l> IsSource for SignalSource<'l> {
-    fn as_ptr(&self) -> *mut spa_sys::spa_source {
-        self.ptr.as_ptr()
-    }
-}
-
-impl<'l> Drop for SignalSource<'l> {
-    fn drop(&mut self) {
-        unsafe { self.loop_.destroy_source(self) }
-    }
-}
-
-/// A source that can be used to signal to a loop that an event has occurred.
-///
-/// This source can be obtained by calling [`add_event`](`LoopRef::add_event`) on a loop, registering a callback to it.
-///
-/// By calling [`signal`](`EventSource::signal`) on the `EventSource`, the loop is signaled that the event has occurred.
-/// It will then call the callback at the next possible occasion.
-pub struct EventSource<'l> {
-    ptr: ptr::NonNull<spa_sys::spa_source>,
-    loop_: &'l LoopRef,
-    // Store data wrapper to prevent leak
-    _data: Box<dyn Fn() + 'static>,
-}
-
-impl<'l> IsSource for EventSource<'l> {
-    fn as_ptr(&self) -> *mut spa_sys::spa_source {
-        self.ptr.as_ptr()
-    }
-}
-
-impl<'l> EventSource<'l> {
-    /// Signal the loop associated with this source that the event has occurred,
-    /// to make the loop call the callback at the next possible occasion.
-    pub fn signal(&self) -> SpaResult {
-        let res = unsafe {
-            let mut iface = self.loop_.as_raw().utils.as_ref().unwrap().iface;
-
-            spa_interface_call_method!(
-                &mut iface as *mut spa_sys::spa_interface,
-                spa_sys::spa_loop_utils_methods,
-                signal_event,
-                self.as_ptr()
-            )
-        };
-
-        SpaResult::from_c(res)
-    }
-}
-
-impl<'l> Drop for EventSource<'l> {
-    fn drop(&mut self) {
-        unsafe { self.loop_.destroy_source(self) }
-    }
-}
-
-/// A source that can be used to have a callback called on a timer.
-///
-/// This source can be obtained by calling [`add_timer`](`LoopRef::add_timer`) on a loop, registering a callback to it.
-///
-/// The timer starts out inactive.
-/// You can arm or disarm the timer by calling [`update_timer`](`Self::update_timer`).
-pub struct TimerSource<'l> {
-    ptr: ptr::NonNull<spa_sys::spa_source>,
-    loop_: &'l LoopRef,
-    // Store data wrapper to prevent leak
-    _data: Box<dyn Fn(u64) + 'static>,
-}
-
-impl<'l> TimerSource<'l> {
-    /// Arm or disarm the timer.
-    ///
-    /// The timer will be called the next time after the provided `value` duration.
-    /// After that, the timer will be repeatedly called again at the the specified `interval`.
-    ///
-    /// If `interval` is `None` or zero, the timer will only be called once. \
-    /// If `value` is `None` or zero, the timer will be disabled.
-    ///
-    /// # Panics
-    /// The provided durations seconds must fit in an i64. Otherwise, this function will panic.
-    pub fn update_timer(&self, value: Option<Duration>, interval: Option<Duration>) -> SpaResult {
-        fn duration_to_timespec(duration: Duration) -> spa_sys::timespec {
-            spa_sys::timespec {
-                tv_sec: duration.as_secs().try_into().expect("Duration too long"),
-                // `Into` is only implemented on some platforms for these types,
-                // so use a fallible conversion.
-                // As there are a limited amount of nanoseconds in a second, this shouldn't fail
-                #[allow(clippy::unnecessary_fallible_conversions)]
-                tv_nsec: duration
-                    .subsec_nanos()
-                    .try_into()
-                    .expect("Nanoseconds should fit into timespec"),
-            }
-        }
-
-        let value = duration_to_timespec(value.unwrap_or_default());
-        let interval = duration_to_timespec(interval.unwrap_or_default());
-
-        let res = unsafe {
-            let mut iface = self.loop_.as_raw().utils.as_ref().unwrap().iface;
-
-            spa_interface_call_method!(
-                &mut iface as *mut spa_sys::spa_interface,
-                spa_sys::spa_loop_utils_methods,
-                update_timer,
-                self.as_ptr(),
-                &value as *const _ as *mut _,
-                &interval as *const _ as *mut _,
-                false
-            )
-        };
-
-        SpaResult::from_c(res)
-    }
-}
-
-impl<'l> IsSource for TimerSource<'l> {
-    fn as_ptr(&self) -> *mut spa_sys::spa_source {
-        self.ptr.as_ptr()
-    }
-}
-
-impl<'l> Drop for TimerSource<'l> {
-    fn drop(&mut self) {
-        unsafe { self.loop_.destroy_source(self) }
     }
 }

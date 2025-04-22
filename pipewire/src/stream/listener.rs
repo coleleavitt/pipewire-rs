@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    ffi::CStr,
     mem,
     os,
     pin::Pin,
     ptr,
 };
 
+use super::{state::StreamState, stream::StreamRef};
 use crate::error::Error;
-use super::{stream::StreamRef, state::StreamState};
 
 type ParamChangedCB<D> = dyn FnMut(&StreamRef, &mut D, u32, Option<&spa::pod::Pod>);
 type ProcessCB<D> = dyn FnMut(&StreamRef, &mut D);
