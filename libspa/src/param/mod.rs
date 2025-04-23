@@ -8,7 +8,9 @@ pub mod video;
 
 use std::ffi::CStr;
 use std::fmt::Debug;
+use std::future::Future;
 use pipewire_sys::pw_buffer;
+
 /// A wrapper around spa_param_type
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct ParamType(pub spa_sys::spa_param_type);
@@ -143,11 +145,11 @@ impl Debug for MetaType {
 }
 
 pub trait TimelineManager {
-    async fn set_acquire_point(&self, point: u64) -> Result<(), anyhow::Error>;
-    async fn signal(&self, point: u64) -> Result<(), anyhow::Error>;
-    async fn is_signaled(&self, point: u64) -> Result<bool, anyhow::Error>;
-    async fn wait_for_available(&self) -> Result<(), anyhow::Error>;
-    async fn queue_buffer(&self, buffer: *mut pw_buffer);
+    fn set_acquire_point(&self, point: u64) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+    fn signal(&self, point: u64) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+    fn is_signaled(&self, point: u64) -> impl Future<Output = Result<bool, anyhow::Error>> + Send;
+    fn wait_for_available(&self) -> impl Future<Output = Result<(), anyhow::Error>> + Send;
+    fn queue_buffer(&self, buffer: *mut pw_buffer) -> impl Future<Output = ()> + Send;
 }
 
 /// A struct to manage the timeline for explicit synchronization

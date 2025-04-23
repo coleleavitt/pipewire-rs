@@ -25,6 +25,7 @@ convert_case = "0.6"
 anyhow = "1.0.97"
 # ---- MOVE THE LINE HERE ----
 pipewire-sys = { version = "0.8", path = "../pipewire-sys" }
+thiserror = "2.0.12"
 # --------------------------
 
 [dev-dependencies]
