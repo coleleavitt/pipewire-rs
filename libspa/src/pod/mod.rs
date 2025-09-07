@@ -34,7 +34,7 @@ use nom::{
         complete::{f32, f64, i32, i64, u32},
         Endianness,
     },
-    IResult,
+    IResult, Parser,
 };
 
 use deserialize::{BoolVisitor, NoneVisitor, PodDeserialize, PodDeserializer};
@@ -797,7 +797,7 @@ impl CanonicalFixedSizedPod for bool {
     where
         Self: Sized,
     {
-        map(u32(Endianness::Native), |b| b != 0)(input)
+        map(u32(Endianness::Native), |b| b != 0).parse(input)
     }
 }
 
@@ -885,7 +885,7 @@ impl CanonicalFixedSizedPod for Rectangle {
         map(
             nom::sequence::pair(u32(Endianness::Native), u32(Endianness::Native)),
             |(width, height)| Rectangle { width, height },
-        )(input)
+        ).parse(input)
     }
 }
 
@@ -905,7 +905,7 @@ impl CanonicalFixedSizedPod for Fraction {
         map(
             nom::sequence::pair(u32(Endianness::Native), u32(Endianness::Native)),
             |(num, denom)| Fraction { num, denom },
-        )(input)
+        ).parse(input)
     }
 }
 
@@ -921,7 +921,7 @@ impl CanonicalFixedSizedPod for Id {
     where
         Self: Sized,
     {
-        map(u32(Endianness::Native), Id)(input)
+        map(u32(Endianness::Native), Id).parse(input)
     }
 }
 
@@ -937,7 +937,7 @@ impl CanonicalFixedSizedPod for Fd {
     where
         Self: Sized,
     {
-        map(i64(Endianness::Native), Fd)(input)
+        map(i64(Endianness::Native), Fd).parse(input)
     }
 }
 

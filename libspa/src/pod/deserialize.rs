@@ -16,7 +16,7 @@ use nom::{
     combinator::{map, map_res, verify},
     number::{complete::u32, complete::u64, Endianness},
     sequence::{delimited, pair, preceded, terminated},
-    IResult,
+    IResult, Parser,
 };
 
 use super::{
@@ -287,12 +287,12 @@ impl<'de> PodDeserializer<'de> {
 
     /// Parse the size from the header and ensure it has the correct type.
     pub(super) fn header<'b>(type_: u32) -> impl FnMut(&'b [u8]) -> IResult<&'b [u8], u32> {
-        terminated(u32(Endianness::Native), tag(type_.to_ne_bytes()))
+        move |input| terminated(u32(Endianness::Native), tag(&type_.to_ne_bytes()[..])).parse(input)
     }
 
     /// Parse and return the type from the header
     pub(super) fn type_<'b>() -> impl FnMut(&'b [u8]) -> IResult<&'b [u8], u32> {
-        preceded(u32(Endianness::Native), u32(Endianness::Native))
+        |input| preceded(u32(Endianness::Native), u32(Endianness::Native)).parse(input)
     }
 
     /// Deserialize any fixed size pod.
@@ -304,13 +304,13 @@ impl<'de> PodDeserializer<'de> {
     ) -> Result<(P, DeserializeSuccess<'de>), DeserializeError<&'de [u8]>> {
         let padding = Self::calc_padding_needed(P::CanonicalType::SIZE);
 
-        self.parse(delimited(
+        self.parse(|input| delimited(
             Self::header(P::CanonicalType::TYPE),
             map(P::CanonicalType::deserialize_body, |res| {
                 P::from_canonical_type(&res)
             }),
             take(padding),
-        ))
+        ).parse(input))
         .map(|res| (res, DeserializeSuccess(self)))
         .map_err(|err| err.into())
     }
@@ -395,12 +395,12 @@ impl<'de> PodDeserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.parse(Self::header(spa_sys::SPA_TYPE_String))?;
+        let len = self.parse(|input| Self::header(spa_sys::SPA_TYPE_String)(input))?;
         let padding = Self::calc_padding_needed(len);
-        let res = self.parse(terminated(
-            map_res(terminated(take(len - 1), tag([b'\0'])), std::str::from_utf8),
+        let res = self.parse(|input| terminated(
+            map_res(terminated(take(len - 1), tag(&[b'\0'][..])), std::str::from_utf8),
             take(padding),
-        ))?;
+        ).parse(input))?;
         Ok((visitor.visit_string(res)?, DeserializeSuccess(self)))
     }
 
@@ -412,9 +412,9 @@ impl<'de> PodDeserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.parse(Self::header(spa_sys::SPA_TYPE_Bytes))?;
+        let len = self.parse(|input| Self::header(spa_sys::SPA_TYPE_Bytes)(input))?;
         let padding = Self::calc_padding_needed(len);
-        let res = self.parse(terminated(take(len), take(padding)))?;
+        let res = self.parse(|input| terminated(take(len), take(padding)).parse(input))?;
         Ok((visitor.visit_bytes(res)?, DeserializeSuccess(self)))
     }
 
@@ -429,10 +429,10 @@ impl<'de> PodDeserializer<'de> {
     where
         E: FixedSizedPod,
     {
-        let len = self.parse(Self::header(spa_sys::SPA_TYPE_Array))?;
-        self.parse(verify(Self::header(E::CanonicalType::TYPE), |len| {
+        let len = self.parse(|input| Self::header(spa_sys::SPA_TYPE_Array)(input))?;
+        self.parse(|input| verify(Self::header(E::CanonicalType::TYPE), |len| {
             *len == E::CanonicalType::SIZE
-        }))?;
+        }).parse(input))?;
 
         let num_elems = if E::CanonicalType::SIZE != 0 {
             (len - 8) / E::CanonicalType::SIZE
@@ -458,7 +458,7 @@ impl<'de> PodDeserializer<'de> {
     fn new_struct_deserializer(
         mut self,
     ) -> Result<StructPodDeserializer<'de>, DeserializeError<&'de [u8]>> {
-        let len = self.parse(Self::header(spa_sys::SPA_TYPE_Struct))?;
+        let len = self.parse(|input| Self::header(spa_sys::SPA_TYPE_Struct)(input))?;
 
         Ok(StructPodDeserializer {
             deserializer: Some(self),
@@ -473,9 +473,9 @@ impl<'de> PodDeserializer<'de> {
     fn new_object_deserializer(
         mut self,
     ) -> Result<ObjectPodDeserializer<'de>, DeserializeError<&'de [u8]>> {
-        let len = self.parse(Self::header(spa_sys::SPA_TYPE_Object))?;
+        let len = self.parse(|input| Self::header(spa_sys::SPA_TYPE_Object)(input))?;
         let (object_type, object_id) =
-            self.parse(pair(u32(Endianness::Native), u32(Endianness::Native)))?;
+            self.parse(|input| pair(u32(Endianness::Native), u32(Endianness::Native)).parse(input))?;
 
         Ok(ObjectPodDeserializer {
             deserializer: Some(self),
@@ -625,11 +625,11 @@ impl<'de> PodDeserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.parse(Self::header(spa_sys::SPA_TYPE_Choice))?;
+        let len = self.parse(|input| Self::header(spa_sys::SPA_TYPE_Choice)(input))?;
         let (choice_type, flags) =
-            self.parse(pair(u32(Endianness::Native), u32(Endianness::Native)))?;
+            self.parse(|input| pair(u32(Endianness::Native), u32(Endianness::Native)).parse(input))?;
         let (child_size, child_type) =
-            self.parse(pair(u32(Endianness::Native), u32(Endianness::Native)))?;
+            self.parse(|input| pair(u32(Endianness::Native), u32(Endianness::Native)).parse(input))?;
         let num_values = (len - 16) / child_size;
 
         fn create_choice<'de, E>(
@@ -767,18 +767,18 @@ impl<'de> PodDeserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let len = self.parse(Self::header(spa_sys::SPA_TYPE_Pointer))?;
+        let len = self.parse(|input| Self::header(spa_sys::SPA_TYPE_Pointer)(input))?;
         let (type_, _padding) =
-            self.parse(pair(u32(Endianness::Native), u32(Endianness::Native)))?;
+            self.parse(|input| pair(u32(Endianness::Native), u32(Endianness::Native)).parse(input))?;
         let ptr_size = len - 8;
 
         let res = match ptr_size {
             8 => {
-                let ptr = self.parse(u64(Endianness::Native))?;
+                let ptr = self.parse(|input| u64(Endianness::Native).parse(input))?;
                 visitor.visit_pointer(type_, ptr as *const c_void)?
             }
             4 => {
-                let ptr = self.parse(u32(Endianness::Native))?;
+                let ptr = self.parse(|input| u32(Endianness::Native).parse(input))?;
                 visitor.visit_pointer(type_, ptr as *const c_void)?
             }
             _ => panic!("unsupported pointer size {}", ptr_size),
@@ -791,7 +791,7 @@ impl<'de> PodDeserializer<'de> {
     pub fn deserialize_any(
         self,
     ) -> Result<(Value, DeserializeSuccess<'de>), DeserializeError<&'de [u8]>> {
-        let type_ = self.peek(Self::type_())?;
+        let type_ = self.peek(|input| Self::type_().parse(input))?;
 
         match type_ {
             spa_sys::SPA_TYPE_None => self.deserialize_none(ValueVisitor),
@@ -818,7 +818,7 @@ impl<'de> PodDeserializer<'de> {
     fn deserialize_array_any(
         self,
     ) -> Result<(Value, DeserializeSuccess<'de>), DeserializeError<&'de [u8]>> {
-        let child_type = self.peek(preceded(Self::type_(), Self::type_()))?;
+        let child_type = self.peek(|input| preceded(Self::type_(), Self::type_()).parse(input))?;
 
         let (array, success) = match child_type {
             spa_sys::SPA_TYPE_None => {
@@ -915,7 +915,7 @@ impl<'de, E: FixedSizedPod> ArrayPodDeserializer<'de, E> {
 
         let result = self
             .deserializer
-            .parse(E::CanonicalType::deserialize_body)
+            .parse(|input| E::CanonicalType::deserialize_body(input))
             .map(|res| E::from_canonical_type(&res))
             .map_err(|err| err.into());
 
@@ -940,7 +940,7 @@ impl<'de, E: FixedSizedPod> ArrayPodDeserializer<'de, E> {
         } else {
             8 - (bytes_read as usize % 8)
         };
-        self.deserializer.parse(take(padding))?;
+        self.deserializer.parse(|input| take(padding)(input))?;
 
         Ok(DeserializeSuccess(self.deserializer))
     }
@@ -1053,8 +1053,8 @@ impl<'de> ObjectPodDeserializer<'de> {
             // The amount of input bytes remaining before deserializing the element.
             let remaining_input_len = deserializer.input.len();
 
-            let key = deserializer.parse(u32(Endianness::Native))?;
-            let flags = deserializer.parse(u32(Endianness::Native))?;
+            let key = deserializer.parse(|input| u32(Endianness::Native)(input))?;
+            let flags = deserializer.parse(|input| u32(Endianness::Native)(input))?;
 
             let flags = PropertyFlags::from_bits_retain(flags);
             let (res, success) = P::deserialize(deserializer)?;
