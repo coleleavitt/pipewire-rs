@@ -9,7 +9,7 @@ pub struct DataType(spa_sys::spa_data_type);
 pub mod meta;
 
 // Re-export the metadata types
-pub use meta::SyncTimelineRef;
+pub use meta::{SyncTimelineRef, SyncFuture, SyncObjTimelineWaiter, SyncObjTimelineSignaler};
 
 #[allow(non_upper_case_globals)]
 impl DataType {
@@ -80,7 +80,37 @@ impl Data {
         DataFlags::from_bits_retain(self.0.flags)
     }
 
-    // FIXME: Add bindings for the fd field, but how to detect when it is not set / invalid?
+    /// Returns the file descriptor for DMA-BUF or other fd-based data types.
+    /// Returns None if no valid file descriptor is available.
+    pub fn fd(&self) -> Option<std::os::unix::io::RawFd> {
+        use std::os::unix::io::RawFd;
+        // PipeWire uses -1 to indicate an invalid file descriptor
+        if self.0.fd >= 0 {
+            Some(self.0.fd as RawFd)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the DMA-BUF file descriptor if this data is of DmaBuf type.
+    /// Returns None if the data type is not DmaBuf or no valid fd is available.
+    pub fn dma_buf_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        if self.type_() == DataType::DmaBuf {
+            self.fd()
+        } else {
+            None
+        }
+    }
+
+    /// Returns the sync object file descriptor if this data is of SyncObj type.
+    /// Returns None if the data type is not SyncObj or no valid fd is available.  
+    pub fn sync_obj_fd(&self) -> Option<std::os::unix::io::RawFd> {
+        if self.type_() == DataType::SyncObj {
+            self.fd()
+        } else {
+            None
+        }
+    }
 
     pub fn data(&mut self) -> Option<&mut [u8]> {
         // FIXME: For safety, perhaps only return a non-mut slice when DataFlags::WRITABLE is not set?
@@ -118,7 +148,7 @@ impl Debug for Data {
         f.debug_struct("Data")
             .field("type", &self.type_())
             .field("flags", &self.flags())
-            // FIXME: Add fd
+            .field("fd", &self.fd())
             .field("data", &self.0.data) // Only print the pointer here, as we don't want to print a (potentially very big) slice.
             .field("chunk", &self.chunk())
             .finish()

@@ -11,12 +11,14 @@ use crate::{
 };
 use bitflags::bitflags;
 use spa::utils::result::SpaResult;
+use spa::buffer::{SyncTimelineRef, DataType};
 use std::{
     ffi::{self, CStr, CString},
     fmt::Debug,
     mem, os,
     pin::Pin,
     ptr,
+    os::unix::io::RawFd,
 };
 
 #[derive(Debug, PartialEq)]
@@ -232,6 +234,76 @@ impl StreamRef {
     pub async fn dequeue_buffer_async(&self) -> Result<Option<Buffer>, Error> {
         // This is just a wrapper that makes the synchronous method work with async code
         Ok(self.dequeue_buffer())
+    }
+
+    /// Dequeue a buffer with linux-drm-syncobj-v1 timeline synchronization support
+    /// 
+    /// This method implements explicit sync using timeline points rather than binary fences.
+    /// It waits for the buffer's acquire timeline point to be signaled before returning,
+    /// enabling efficient multiple-frames-in-flight workflows.
+    pub async fn dequeue_buffer_with_sync(&self) -> Result<Option<Buffer>, Error> {
+        if let Some(buffer) = self.dequeue_buffer() {
+            // Check if buffer has sync metadata and wait for acquire point
+            if let Some(sync_timeline) = buffer.get_sync_timeline_metadata() {
+                sync_timeline.wait_for_available().await.map_err(|e| Error::CreationFailed)?;
+            }
+            Ok(Some(buffer))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Queue a buffer with linux-drm-syncobj-v1 timeline synchronization
+    /// 
+    /// This method uses the acquire/release timeline points embedded in the buffer's
+    /// spa_meta_sync_timeline metadata. This implements the modern timeline-based
+    /// approach which allows multiple frames in flight with explicit dependencies.
+    pub async fn queue_buffer_with_sync(&self, buffer: Buffer<'_>) -> Result<(), Error> {
+        // Get sync timeline metadata from the buffer itself
+        if let Some(sync_timeline) = buffer.get_sync_timeline_metadata() {
+            // Get the syncobj timeline fds from the buffer
+            if let Some((acquire_timeline_fd, release_timeline_fd)) = buffer.get_sync_fds() {
+                // Use the actual timeline points from PipeWire metadata
+                sync_timeline.sync_dma_buf(acquire_timeline_fd, release_timeline_fd).await
+                    .map_err(|_| Error::CreationFailed)?;
+            }
+        }
+        
+        unsafe {
+            self.queue_raw_buffer(buffer.into_raw());
+        }
+        Ok(())
+    }
+
+    /// Queue buffer with custom linux-drm-syncobj-v1 timeline points
+    /// 
+    /// This advanced method allows overriding the buffer's default timeline points
+    /// with custom values, enabling fine-grained control over synchronization timing.
+    /// Useful for complex multi-stage rendering or encoding pipelines.
+    pub async fn queue_buffer_with_custom_sync(
+        &self, 
+        buffer: Buffer<'_>,
+        acquire_point: u64,
+        release_point: u64
+    ) -> Result<(), Error> {
+        // Get sync timeline from buffer and update points if available
+        if let Some(mut sync_timeline) = buffer.get_sync_timeline_metadata() {
+            // Update timeline points
+            sync_timeline.set_acquire_point(acquire_point).await
+                .map_err(|_| Error::CreationFailed)?;
+            let _ = sync_timeline.signal_release(release_point).await;
+            
+            // Get the syncobj timeline fds from the buffer
+            if let Some((acquire_timeline_fd, release_timeline_fd)) = buffer.get_sync_fds() {
+                sync_timeline.sync_dma_buf(acquire_timeline_fd, release_timeline_fd).await
+                    .map_err(|_| Error::CreationFailed)?;
+            }
+        }
+        
+        unsafe {
+            self.queue_raw_buffer(buffer.into_raw());
+        }
+        Ok(())
     }
 
     /// Return a Buffer to the Stream

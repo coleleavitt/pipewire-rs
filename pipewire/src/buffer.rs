@@ -1,6 +1,6 @@
 use super::stream::StreamRef;
 
-use spa::buffer::Data;
+use spa::buffer::{Data, DataType, SyncTimelineRef};
 use std::convert::TryFrom;
 use std::ptr::NonNull;
 
@@ -54,6 +54,82 @@ impl<'s> Buffer<'s> {
     #[cfg(feature = "v0_3_49")]
     pub fn requested(&self) -> u64 {
         unsafe { self.buf.as_ref().requested }
+    }
+
+    /// Gets sync timeline metadata from the buffer if present
+    pub fn get_sync_timeline_metadata(&self) -> Option<SyncTimelineRef> {
+        let buffer: *mut spa_sys::spa_buffer = unsafe { self.buf.as_ref().buffer };
+        
+        if buffer.is_null() {
+            return None;
+        }
+
+        let spa_buffer = unsafe { &*buffer };
+        if spa_buffer.n_metas == 0 || spa_buffer.metas.is_null() {
+            return None;
+        }
+
+        // Search through metadata for sync timeline
+        for i in 0..spa_buffer.n_metas {
+            let meta = unsafe { &*spa_buffer.metas.add(i as usize) };
+            
+            // Check if this meta is a sync timeline (spa_meta_type_SPA_META_SyncTimeline = 9)
+            if meta.type_ == 9 && !meta.data.is_null() { // spa_meta_type_SPA_META_SyncTimeline
+                unsafe {
+                    let sync_timeline_ptr = meta.data as *mut spa_sys::spa_meta_sync_timeline;
+                    return SyncTimelineRef::from_raw(sync_timeline_ptr);
+                }
+            }
+        }
+        
+        None
+    }
+
+    /// Gets all DMA-BUF data elements from this buffer
+    pub fn datas_with_type(&self, data_type: DataType) -> Option<Vec<&Data>> {
+        let mut matching_datas = Vec::new();
+        
+        let buffer: *mut spa_sys::spa_buffer = unsafe { self.buf.as_ref().buffer };
+        if buffer.is_null() {
+            return None;
+        }
+
+        let spa_buffer = unsafe { &*buffer };
+        if spa_buffer.n_datas == 0 || spa_buffer.datas.is_null() {
+            return None;
+        }
+
+        for i in 0..spa_buffer.n_datas {
+            let data = unsafe { &*(spa_buffer.datas.add(i as usize) as *const Data) };
+            if data.type_() == data_type {
+                matching_datas.push(data);
+            }
+        }
+        
+        if matching_datas.is_empty() {
+            None
+        } else {
+            Some(matching_datas)
+        }
+    }
+
+    /// Helper method to get sync object file descriptors from sync data
+    pub fn get_sync_fds(&self) -> Option<(std::os::unix::io::RawFd, std::os::unix::io::RawFd)> {
+        if let Some(sync_datas) = self.datas_with_type(DataType::SyncObj) {
+            if sync_datas.len() >= 2 {
+                let acquire_fd = sync_datas[0].fd()?;  // First syncobj is acquire timeline
+                let release_fd = sync_datas[1].fd()?;  // Second syncobj is release timeline
+                return Some((acquire_fd, release_fd));
+            }
+        }
+        None
+    }
+
+    /// Convert buffer back to raw pointer for queuing, consuming the Buffer
+    pub(crate) fn into_raw(self) -> *mut pw_sys::pw_buffer {
+        let buf_ptr = self.buf.as_ptr();
+        std::mem::forget(self); // Don't drop, we're transferring ownership
+        buf_ptr
     }
 }
 
