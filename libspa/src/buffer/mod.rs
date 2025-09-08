@@ -8,7 +8,7 @@ pub struct DataType(spa_sys::spa_data_type);
 
 pub mod meta;
 
-// Re-export the metadata types
+// Re-export the metadata types  
 pub use meta::{SyncTimelineRef, SyncFuture, SyncObjTimelineWaiter, SyncObjTimelineSignaler};
 
 #[allow(non_upper_case_globals)]
