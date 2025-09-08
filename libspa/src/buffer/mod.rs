@@ -8,8 +8,9 @@ pub struct DataType(spa_sys::spa_data_type);
 
 pub mod meta;
 
-// Re-export the metadata types  
-pub use meta::{SyncTimelineRef, SyncFuture, SyncObjTimelineWaiter, SyncObjTimelineSignaler};
+// Re-export the metadata types conditionally based on feature flag
+#[cfg(feature = "v0_3_77")]
+pub use meta::{SyncTimelineRef, SyncFuture, SyncObjTimelineSignaler, SyncObjTimelineWaiter};
 
 #[allow(non_upper_case_globals)]
 impl DataType {

@@ -29,11 +29,28 @@ use libc::{c_int, c_ulong, ioctl};
 use std::os::unix::io::RawFd;
 use std::ptr;
 
-// DRM ioctl constants from drm.h
-const DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT: c_ulong = 0xc0305fca;
-const DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL: c_ulong = 0xc0305fcd;
+// DRM syncobj query flags
+const DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED: u32 = 1 << 0;
 
-// DRM syncobj structures matching the kernel headers
+// DRM ioctl calculation macros matching kernel headers
+const DRM_IOC_NONE: c_ulong = 0;
+const DRM_IOC_READ: c_ulong = 2;
+const DRM_IOC_WRITE: c_ulong = 1;
+const DRM_IOC_READWRITE: c_ulong = DRM_IOC_READ | DRM_IOC_WRITE;
+
+const fn drm_iowr(nr: c_ulong, size: usize) -> c_ulong {
+    (DRM_IOC_READWRITE << 30) | ((size as c_ulong) << 16) | (0x64 << 8) | nr
+}
+
+// DRM ioctl constants calculated properly from kernel headers
+const DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT: c_ulong = drm_iowr(0xCA, std::mem::size_of::<DrmSyncobjTimelineWait>());
+const DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL: c_ulong = drm_iowr(0xCD, std::mem::size_of::<DrmSyncobjTimelineArray>());
+const DRM_IOCTL_SYNCOBJ_QUERY: c_ulong = drm_iowr(0xCB, std::mem::size_of::<DrmSyncobjTimelineArray>());
+const DRM_IOCTL_SYNCOBJ_EVENTFD: c_ulong = drm_iowr(0xCF, std::mem::size_of::<DrmSyncobjEventfd>());
+const DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE: c_ulong = drm_iowr(0xC2, std::mem::size_of::<DrmSyncobjHandle>());
+const DRM_IOCTL_VERSION: c_ulong = drm_iowr(0x00, std::mem::size_of::<DrmVersion>());
+
+// DRM syncobj structures matching the kernel headers exactly
 #[repr(C)]
 struct DrmSyncobjTimelineWait {
     handles: u64,       // pointer to array of handles
@@ -43,6 +60,7 @@ struct DrmSyncobjTimelineWait {
     flags: u32,         // wait flags
     first_signaled: u32,// index of first signaled (output)
     pad: u32,           // padding
+    deadline_nsec: u64, // fence deadline hint (added in newer kernels)
 }
 
 #[repr(C)]
@@ -74,6 +92,7 @@ pub fn drm_syncobj_timeline_wait(
         flags: 0,
         first_signaled: 0,
         pad: 0,
+        deadline_nsec: 0, // No deadline hint for now
     };
 
     let ret = unsafe {
@@ -125,24 +144,31 @@ pub fn drm_syncobj_timeline_signal(
     }
 }
 
+#[repr(C)]
+struct DrmSyncobjEventfd {
+    handle: u32,
+    flags: u32,
+    point: u64,
+    fd: i32,
+    pad: u32,
+}
+
+#[repr(C)]
+struct DrmVersion {
+    version_major: c_int,
+    version_minor: c_int,
+    version_patchlevel: c_int,
+    name_len: libc::size_t,
+    name: *mut libc::c_char,
+    date_len: libc::size_t,
+    date: *mut libc::c_char,
+    desc_len: libc::size_t,
+    desc: *mut libc::c_char,
+}
+
 /// Check if a file descriptor is a valid DRM device
 pub fn is_drm_fd(fd: RawFd) -> bool {
     // Try to get DRM version info to verify it's a DRM device
-    // This is a simple validation - real implementation might do more
-    const DRM_IOCTL_VERSION: c_ulong = 0xc0406400;
-    
-    #[repr(C)]
-    struct DrmVersion {
-        version_major: c_int,
-        version_minor: c_int,
-        version_patchlevel: c_int,
-        name_len: libc::size_t,
-        name: *mut libc::c_char,
-        date_len: libc::size_t,
-        date: *mut libc::c_char,
-        desc_len: libc::size_t,
-        desc: *mut libc::c_char,
-    }
     
     let mut version = DrmVersion {
         version_major: 0,
@@ -163,21 +189,20 @@ pub fn is_drm_fd(fd: RawFd) -> bool {
     ret == 0
 }
 
+#[repr(C)]
+struct DrmSyncobjHandle {
+    handle: u32,
+    flags: u32,
+    fd: i32,
+    pad: u32,
+}
+
 /// Extract DRM handle from syncobj file descriptor
 ///
 /// Converts a syncobj file descriptor to a DRM handle using the proper DRM ioctl.
 /// The file descriptor should be a DRM syncobj fd that was exported from another
 /// process or imported via DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD.
 pub fn fd_to_drm_handle(drm_device_fd: RawFd, syncobj_fd: RawFd) -> Result<u32, std::io::Error> {
-    const DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE: c_ulong = 0xc0106fc2;
-    
-    #[repr(C)]
-    struct DrmSyncobjHandle {
-        handle: u32,
-        flags: u32,
-        fd: i32,
-        pad: u32,
-    }
     
     if !is_drm_fd(drm_device_fd) {
         return Err(std::io::Error::new(
@@ -208,12 +233,40 @@ pub fn fd_to_drm_handle(drm_device_fd: RawFd, syncobj_fd: RawFd) -> Result<u32, 
     }
 }
 
+/// Managed DRM device file descriptor
+/// 
+/// This struct properly manages the lifetime of a DRM device file descriptor
+/// to prevent premature closing and resource leaks.
+pub struct DrmDeviceFd {
+    fd: RawFd,
+}
+
+impl DrmDeviceFd {
+    pub fn new(fd: RawFd) -> Self {
+        Self { fd }
+    }
+    
+    pub fn as_raw_fd(&self) -> RawFd {
+        self.fd
+    }
+}
+
+impl Drop for DrmDeviceFd {
+    fn drop(&mut self) {
+        if self.fd >= 0 {
+            unsafe {
+                libc::close(self.fd);
+            }
+        }
+    }
+}
+
 /// Find the DRM device file descriptor associated with a syncobj fd
 /// 
 /// In practice, PipeWire should provide both the DRM device fd and the syncobj fds
 /// together as part of the buffer negotiation. This is a fallback that attempts
-/// to find a suitable DRM device.
-pub fn find_drm_device_fd() -> Result<RawFd, std::io::Error> {
+/// to find a suitable DRM device and returns a properly managed DrmDeviceFd.
+pub fn find_drm_device_fd() -> Result<DrmDeviceFd, std::io::Error> {
     // Try common DRM device nodes
     for i in 0..16 {
         let path = format!("/dev/dri/card{}", i);
@@ -221,12 +274,10 @@ pub fn find_drm_device_fd() -> Result<RawFd, std::io::Error> {
             use std::os::unix::io::AsRawFd;
             let fd = file.as_raw_fd();
             if is_drm_fd(fd) {
-                // We found a valid DRM device, but we need to prevent the file from closing
-                // when it goes out of scope. In a real implementation, this should be 
-                // managed properly by keeping the File open.
+                // Duplicate the file descriptor to manage its lifetime properly
                 let fd_copy = unsafe { libc::dup(fd) };
                 return if fd_copy >= 0 {
-                    Ok(fd_copy)
+                    Ok(DrmDeviceFd::new(fd_copy))
                 } else {
                     Err(std::io::Error::last_os_error())
                 };
@@ -238,4 +289,72 @@ pub fn find_drm_device_fd() -> Result<RawFd, std::io::Error> {
         std::io::ErrorKind::NotFound,
         "No DRM device found"
     ))
+}
+
+/// Query DRM syncobj timeline points
+///
+/// This queries the current signaled timeline point for a DRM syncobj timeline.
+/// Used to check if a timeline point has been signaled without blocking.
+pub fn drm_syncobj_timeline_query(
+    drm_fd: RawFd,
+    handle: u32,
+) -> Result<u64, std::io::Error> {
+    let handle_ptr = &handle as *const u32 as u64;
+    let mut point: u64 = 0;
+    let point_ptr = &mut point as *mut u64 as u64;
+    
+    let query_args = DrmSyncobjTimelineArray {
+        handles: handle_ptr,
+        points: point_ptr,
+        count_handles: 1,
+        flags: DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED,
+    };
+
+    let ret = unsafe {
+        ioctl(
+            drm_fd,
+            DRM_IOCTL_SYNCOBJ_QUERY,
+            &query_args as *const _ as *const libc::c_void,
+        )
+    };
+
+    if ret == 0 {
+        Ok(point)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Register an eventfd for syncobj timeline notification
+///
+/// This registers an eventfd to be signaled when a specific timeline point
+/// on a syncobj timeline is reached. This enables proper async notification
+/// instead of polling.
+pub fn drm_syncobj_eventfd_register(
+    drm_fd: RawFd,
+    handle: u32,
+    timeline_point: u64,
+    event_fd: RawFd,
+) -> Result<(), std::io::Error> {
+    let eventfd_args = DrmSyncobjEventfd {
+        handle,
+        flags: 0, // Wait for point to be signaled
+        point: timeline_point,
+        fd: event_fd,
+        pad: 0,
+    };
+
+    let ret = unsafe {
+        ioctl(
+            drm_fd,
+            DRM_IOCTL_SYNCOBJ_EVENTFD,
+            &eventfd_args as *const _ as *const libc::c_void,
+        )
+    };
+
+    if ret == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }

@@ -19,6 +19,7 @@ spa_sys = { package = "libspa-sys", version = "0.8", path = "../libspa-sys" }
 bitflags = "2"
 libc = "0.2"
 nix = "0.30.1"
+tokio = { version = "1.0", features = ["net", "time", "macros", "full"] }
 cookie-factory = "0.3.2"
 nom = "8.0.0"
 convert_case = "0.8.0"
@@ -42,3 +43,4 @@ v0_3_40 = ["v0_3_33"]
 v0_3_65 = ["v0_3_40", "spa_sys/v0_3_65"]
 v0_3_68 = ["v0_3_65"]
 v0_3_75 = ["v0_3_65"]
+v0_3_77 = ["v0_3_75"]  # SPA_META_SyncTimeline and explicit sync support
