@@ -23,6 +23,7 @@ cookie-factory = "0.3.2"
 nom = "8.0.0"
 convert_case = "0.8.0"
 anyhow = "1.0.97"
+thiserror = "1.0"
 pipewire-sys = { version = "0.8", path = "../pipewire-sys" }
 
 [dev-dependencies]
