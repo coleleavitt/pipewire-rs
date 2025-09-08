@@ -1,7 +1,3 @@
-use libc::{c_int, c_ulong, ioctl};
-use std::os::unix::io::RawFd;
-use std::ptr;
-
 //! # DRM Syncobj Timeline Integration for linux-drm-syncobj-v1
 //!
 //! This module provides proper Linux DRM syncobj timeline integration for PipeWire's
@@ -28,6 +24,10 @@ use std::ptr;
 //! - `fd_to_drm_handle()`: Converts syncobj fd to DRM handle using `DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE`
 //! - `drm_syncobj_timeline_wait()`: Waits for timeline point via `DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT`  
 //! - `drm_syncobj_timeline_signal()`: Signals timeline point via `DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL`
+
+use libc::{c_int, c_ulong, ioctl};
+use std::os::unix::io::RawFd;
+use std::ptr;
 
 // DRM ioctl constants from drm.h
 const DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT: c_ulong = 0xc0305fca;
@@ -214,8 +214,6 @@ pub fn fd_to_drm_handle(drm_device_fd: RawFd, syncobj_fd: RawFd) -> Result<u32, 
 /// together as part of the buffer negotiation. This is a fallback that attempts
 /// to find a suitable DRM device.
 pub fn find_drm_device_fd() -> Result<RawFd, std::io::Error> {
-    use std::fs;
-    
     // Try common DRM device nodes
     for i in 0..16 {
         let path = format!("/dev/dri/card{}", i);
