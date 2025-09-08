@@ -6,6 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+use crate::drm;
 
 /// A transparent wrapper around a spa_meta_sync_timeline for explicit synchronization.
 ///
@@ -247,12 +248,53 @@ impl Future for SyncObjTimelineWaiter {
             )));
         }
 
-        // PipeWire will coordinate with the GPU driver to handle the actual syncobj timeline wait
-        // For now, simulate immediate completion for valid fds until proper DRM integration
-        if self.timeline_fd >= 0 {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Ready(Err(anyhow::anyhow!("Invalid syncobj timeline file descriptor")))
+        // Validate that this is a DRM file descriptor
+        if !drm::is_drm_fd(self.timeline_fd) {
+            return Poll::Ready(Err(anyhow::anyhow!(
+                "Invalid DRM syncobj file descriptor: {}", 
+                self.timeline_fd
+            )));
+        }
+
+        // Find the DRM device and convert syncobj fd to handle
+        match drm::find_drm_device_fd() {
+            Ok(drm_device_fd) => {
+                match drm::fd_to_drm_handle(drm_device_fd, self.timeline_fd) {
+                    Ok(handle) => {
+                        // Use a short timeout for non-blocking operation in async context
+                        let timeout_ns = 1_000_000; // 1ms timeout for non-blocking check
+                        match drm::drm_syncobj_timeline_wait(drm_device_fd, handle, self.timeline_point, timeout_ns) {
+                            Ok(()) => {
+                                // Clean up the DRM device fd
+                                unsafe { libc::close(drm_device_fd); }
+                                Poll::Ready(Ok(()))
+                            },
+                            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                                // Timeline point not yet signaled, wake for retry
+                                unsafe { libc::close(drm_device_fd); }
+                                cx.waker().wake_by_ref();
+                                Poll::Pending
+                            },
+                            Err(e) => {
+                                unsafe { libc::close(drm_device_fd); }
+                                Poll::Ready(Err(anyhow::anyhow!(
+                                    "DRM syncobj timeline wait failed: {}", e
+                                )))
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        unsafe { libc::close(drm_device_fd); }
+                        Poll::Ready(Err(anyhow::anyhow!(
+                            "Failed to get DRM handle from syncobj fd {}: {}", 
+                            self.timeline_fd, e
+                        )))
+                    },
+                }
+            },
+            Err(e) => Poll::Ready(Err(anyhow::anyhow!(
+                "Failed to find DRM device: {}", e
+            ))),
         }
     }
 }
@@ -284,12 +326,44 @@ impl Future for SyncObjTimelineSignaler {
     type Output = Result<(), anyhow::Error>;
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // PipeWire coordinates with GPU driver to signal the timeline point
-        // For now, simulate immediate completion for valid fds
-        if self.timeline_fd >= 0 {
-            Poll::Ready(Ok(()))
-        } else {
-            Poll::Ready(Err(anyhow::anyhow!("Invalid syncobj timeline file descriptor")))
+        // Validate that this is a DRM file descriptor
+        if !drm::is_drm_fd(self.timeline_fd) {
+            return Poll::Ready(Err(anyhow::anyhow!(
+                "Invalid DRM syncobj file descriptor: {}", 
+                self.timeline_fd
+            )));
+        }
+
+        // Find the DRM device and convert syncobj fd to handle
+        match drm::find_drm_device_fd() {
+            Ok(drm_device_fd) => {
+                match drm::fd_to_drm_handle(drm_device_fd, self.timeline_fd) {
+                    Ok(handle) => {
+                        match drm::drm_syncobj_timeline_signal(drm_device_fd, handle, self.timeline_point) {
+                            Ok(()) => {
+                                unsafe { libc::close(drm_device_fd); }
+                                Poll::Ready(Ok(()))
+                            },
+                            Err(e) => {
+                                unsafe { libc::close(drm_device_fd); }
+                                Poll::Ready(Err(anyhow::anyhow!(
+                                    "DRM syncobj timeline signal failed: {}", e
+                                )))
+                            },
+                        }
+                    },
+                    Err(e) => {
+                        unsafe { libc::close(drm_device_fd); }
+                        Poll::Ready(Err(anyhow::anyhow!(
+                            "Failed to get DRM handle from syncobj fd {}: {}", 
+                            self.timeline_fd, e
+                        )))
+                    },
+                }
+            },
+            Err(e) => Poll::Ready(Err(anyhow::anyhow!(
+                "Failed to find DRM device: {}", e
+            ))),
         }
     }
 }

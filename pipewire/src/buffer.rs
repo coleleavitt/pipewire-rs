@@ -73,8 +73,8 @@ impl<'s> Buffer<'s> {
         for i in 0..spa_buffer.n_metas {
             let meta = unsafe { &*spa_buffer.metas.add(i as usize) };
             
-            // Check if this meta is a sync timeline (spa_meta_type_SPA_META_SyncTimeline = 9)
-            if meta.type_ == 9 && !meta.data.is_null() { // spa_meta_type_SPA_META_SyncTimeline
+            // Check if this meta is a sync timeline
+            if meta.type_ == spa_sys::SPA_META_SyncTimeline && !meta.data.is_null() {
                 unsafe {
                     let sync_timeline_ptr = meta.data as *mut spa_sys::spa_meta_sync_timeline;
                     return SyncTimelineRef::from_raw(sync_timeline_ptr);
@@ -114,12 +114,19 @@ impl<'s> Buffer<'s> {
     }
 
     /// Helper method to get sync object file descriptors from sync data
+    /// 
+    /// Returns valid DRM syncobj file descriptors for acquire and release timelines.
+    /// Both file descriptors are validated to ensure they are proper DRM devices.
     pub fn get_sync_fds(&self) -> Option<(std::os::unix::io::RawFd, std::os::unix::io::RawFd)> {
         if let Some(sync_datas) = self.datas_with_type(DataType::SyncObj) {
             if sync_datas.len() >= 2 {
                 let acquire_fd = sync_datas[0].fd()?;  // First syncobj is acquire timeline
                 let release_fd = sync_datas[1].fd()?;  // Second syncobj is release timeline
-                return Some((acquire_fd, release_fd));
+                
+                // Validate both file descriptors are valid DRM devices
+                if spa::drm::is_drm_fd(acquire_fd) && spa::drm::is_drm_fd(release_fd) {
+                    return Some((acquire_fd, release_fd));
+                }
             }
         }
         None

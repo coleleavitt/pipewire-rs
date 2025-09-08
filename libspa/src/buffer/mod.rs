@@ -34,7 +34,7 @@ impl DataType {
     }
 }
 
-impl std::fmt::Debug for DataType {
+impl Debug for DataType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = format!(
             "DataType::{}",
