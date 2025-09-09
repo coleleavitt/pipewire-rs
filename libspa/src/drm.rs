@@ -32,6 +32,9 @@ use std::ptr;
 // DRM syncobj query flags
 const DRM_SYNCOBJ_QUERY_FLAGS_LAST_SUBMITTED: u32 = 1 << 0;
 
+// DRM syncobj creation flags
+const DRM_SYNCOBJ_CREATE_SIGNALED: u32 = 1 << 0;
+
 // DRM ioctl calculation macros matching kernel headers
 const DRM_IOC_NONE: c_ulong = 0;
 const DRM_IOC_READ: c_ulong = 2;
@@ -48,6 +51,8 @@ const DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL: c_ulong = drm_iowr(0xCD, std::mem::size
 const DRM_IOCTL_SYNCOBJ_QUERY: c_ulong = drm_iowr(0xCB, std::mem::size_of::<DrmSyncobjTimelineArray>());
 const DRM_IOCTL_SYNCOBJ_EVENTFD: c_ulong = drm_iowr(0xCF, std::mem::size_of::<DrmSyncobjEventfd>());
 const DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE: c_ulong = drm_iowr(0xC2, std::mem::size_of::<DrmSyncobjHandle>());
+const DRM_IOCTL_SYNCOBJ_CREATE: c_ulong = drm_iowr(0xBF, std::mem::size_of::<DrmSyncobjCreate>());
+const DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD: c_ulong = drm_iowr(0xC1, std::mem::size_of::<DrmSyncobjHandle>());
 const DRM_IOCTL_VERSION: c_ulong = drm_iowr(0x00, std::mem::size_of::<DrmVersion>());
 
 // DRM syncobj structures matching the kernel headers exactly
@@ -195,6 +200,12 @@ struct DrmSyncobjHandle {
     flags: u32,
     fd: i32,
     pad: u32,
+}
+
+#[repr(C)]
+struct DrmSyncobjCreate {
+    handle: u32,
+    flags: u32,
 }
 
 /// Extract DRM handle from syncobj file descriptor
@@ -354,6 +365,58 @@ pub fn drm_syncobj_eventfd_register(
 
     if ret == 0 {
         Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Create a new DRM syncobj timeline object
+///
+/// Creates a new syncobj timeline that can be used for explicit synchronization.
+/// Timeline syncobjs use incrementing point values rather than binary states.
+pub fn create_drm_syncobj_timeline(drm_fd: RawFd) -> Result<u32, std::io::Error> {
+    let mut create_args = DrmSyncobjCreate {
+        handle: 0, // Output - will be filled by kernel
+        flags: 0,  // Create unsignaled timeline
+    };
+
+    let ret = unsafe {
+        ioctl(
+            drm_fd,
+            DRM_IOCTL_SYNCOBJ_CREATE,
+            &mut create_args as *mut _ as *mut libc::c_void,
+        )
+    };
+
+    if ret == 0 {
+        Ok(create_args.handle)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Export DRM syncobj handle to file descriptor
+///
+/// Converts a DRM syncobj handle to a file descriptor that can be passed
+/// to other processes or used in PipeWire timeline metadata.
+pub fn drm_syncobj_handle_to_fd(drm_fd: RawFd, handle: u32) -> Result<RawFd, std::io::Error> {
+    let mut handle_args = DrmSyncobjHandle {
+        handle,
+        flags: 0,
+        fd: -1, // Output - will be filled by kernel
+        pad: 0,
+    };
+
+    let ret = unsafe {
+        ioctl(
+            drm_fd,
+            DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD,
+            &mut handle_args as *mut _ as *mut libc::c_void,
+        )
+    };
+
+    if ret == 0 {
+        Ok(handle_args.fd)
     } else {
         Err(std::io::Error::last_os_error())
     }
